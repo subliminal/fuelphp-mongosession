@@ -22,14 +22,13 @@
 namespace Fuel\Core;
 
 
-
 // --------------------------------------------------------------------
 
 class Session_Mongo extends \Session_Driver
 {
 
 	/*
-	 * @var	session database result object
+	 * @var sessionn database result object
 	 */
 	protected $record = null;
 
@@ -37,17 +36,22 @@ class Session_Mongo extends \Session_Driver
 	 * array of driver config defaults
 	 */
 	protected static $_defaults = array(
-		'cookie_name'		=> 'fueldid',			// name of the session cookie for database based sessions
-		'collection'		=> 'Sessions',                // name of the sessions collection
-		'gc_probability'	=> 5                        // probability % (between 0 and 100) for garbage collection
+		'cookie_name' => 'fuelmonid', // name of the session cookie for database based sessions
+		'collection' => 'session', // name of the sessions collection
+		'gc_probability' => 5 // probability % (between 0 and 100) for garbage collection
 	);
+
+	/**
+	 * @var \MongoCollection storage for the mongo object
+	 */
+	protected $mongo = false;
 
 	// --------------------------------------------------------------------
 
 	public function __construct($config = array())
 	{
 		// merge the driver config with the global config
-		$this->config = array_merge($config, is_array($config['db']) ? $config['db'] : static::$_defaults);
+		$this->config = array_merge($config, is_array($config['mongo']) ? $config['mongo'] : static::$_defaults);
 
 		$this->config = $this->_validate_config($this->config);
 	}
@@ -55,27 +59,47 @@ class Session_Mongo extends \Session_Driver
 	// --------------------------------------------------------------------
 
 	/**
+	 * driver initialisation
+	 *
+	 * @access public
+	 * @return void
+	 */
+	public function init()
+	{
+		// generic driver initialisation
+		parent::init();
+
+		if ($this->mongo === false)
+		{
+			// do we have the mongo extenion available
+			if (!class_exists('MongoClient'))
+			{
+				throw new \FuelException('Mongo session are configured, but your PHP installation doesn\'t have the MongoDB extension loaded.');
+			}
+
+			// instantiate the mongo object
+			$this->mongo = \Mongo_Db::instance($this->config['database'])->get_collection($this->config['collection']);
+		}
+	}
+
+	/**
 	 * create a new session
 	 *
-	 * @access	public
-	 * @return	Fuel\Core\Session_Db
+	 * @access    public
+	 * @return    \Fuel\Core\Session_Db
 	 */
-	public function create()
+	public function create($payload = '')
 	{
 		// create a new session
-		$this->keys['session_id']	= $this->_new_session_id();
-		$this->keys['previous_id']	= $this->keys['session_id'];	// prevents errors if previous_id has a unique index
-		$this->keys['ip_hash']		= md5(\Input::ip().\Input::real_ip());
-		$this->keys['user_agent']	= \Input::user_agent();
-		$this->keys['created'] 		= $this->time->get_timestamp();
-		$this->keys['updated'] 		= $this->keys['created'];
-		$this->keys['payload'] 		= '';
+		$this->keys['session_id'] = $this->_new_session_id();
+		$this->keys['previous_id'] = $this->keys['session_id']; // prevents errors if previous_id has a unique index
+		$this->keys['ip_hash'] = md5(\Input::ip() . \Input::real_ip());
+		$this->keys['user_agent'] = \Input::user_agent();
+		$this->keys['created'] = $this->time->get_timestamp();
+		$this->keys['updated'] = $this->keys['created'];
 
-                // create the session record
-                $result = \Mongo_Db::instance($this->config['database'])->insert($this->config['collection'], $this->keys);
-
-		// and set the session cookie
-		$this->_set_cookie();
+		// add the payload
+		$this->keys['payload'] = $payload;
 
 		return $this;
 	}
@@ -85,154 +109,149 @@ class Session_Mongo extends \Session_Driver
 	/**
 	 * read the session
 	 *
-	 * @access	public
-	 * @param	boolean, set to true if we want to force a new session to be created
-	 * @return	Fuel\Core\Session_Driver
+	 * @access    public
+	 * @param    boolean , set to true if we want to force a new session to be created
+	 * @return    \Fuel\Core\Session_Driver
 	 */
 	public function read($force = false)
 	{
+		$this->data = array();
+		$this->keys = array();
+		$this->flash = array();
+		$this->record = array();
+
 		// get the session cookie
 		$cookie = $this->_get_cookie();
 
 		// if no session cookie was present, create it
-		if ($cookie === false or $force)
+		if ($cookie and !$force and isset($cookie[0]))
 		{
-			$this->create();
-		}
+			$payload = $this->_read_mongo($cookie[0]);
 
-                // read the session record
-                $this->record = \Mongo_Db::instance($this->config['database'])
-                        ->where(
-                                array(
-                                    'session_id' => $this->keys['session_id']
-                                ))
-                        ->get_one($this->config['collection']);
-
-		// record found?
-		if (!empty($this->record))
-		{
-			$payload = $this->_unserialize($this->record['payload']);
-		}
-		else
-		{
-                        // try to find the session on previous id
-                        $this->record = \Mongo_Db::instance($this->config['database'])
-                            ->where(
-                                    array(
-                                        'previous_id' => $this->keys['session_id']
-                                    ))
-                            ->get_one($this->config['collection']);
-                        
-
-			// record found?
-			if (!empty($this->record))
-			{
-                                // previous id used, correctly set session id so it wont be overwritten with previous id.
-                                $this->keys['session_id'] = $this->record['session_id'];                             
-				$payload = $this->_unserialize($this->record['payload']);
-			}
-			else
+			if (empty($payload))
 			{
 				// cookie present, but session record missing. force creation of a new session
-				$this->read(true);
-				return;
+				return $this->read(true);
+			}
+			// unpack the payload
+//			$payload = $this->_unserialize($payload);
+
+			// session referral?
+			if (isset($payload['rotated_session_id']))
+			{
+				$payload = $this->_read_mongo($payload['rotated_session_id']);
+				if ($payload === false)
+				{
+					// cookie present, but session record missing. force creation of a new session
+					return $this->read(true);
+				} else
+				{
+					// unpack the payload
+//					$payload = $this->_unserialize($payload);
+				}
+			}
+
+			if (!isset($payload[0]) or !is_array($payload[0]))
+			{
+				// not a valid cookie payload
+			} elseif ($payload[0]['updated'] + $this->config['expiration_time'] <= $this->time->get_timestamp())
+			{
+				// session has expired
+			} elseif ($this->config['match_ip'] and $payload[0]['ip_hash'] !== md5(\Input::ip() . \Input::real_ip()))
+			{
+				// IP address doesn't match
+			} elseif ($this->config['match_ua'] and $payload[0]['user_agent'] !== \Input::user_agent())
+			{
+				// user agent doesn't match
+			} else
+			{ var_dump($payload);die();
+				// session is valid, retrieve the rest of the payload
+				if (isset($payload[0]) and is_array($payload[0])) $this->keys = $payload['keys'];
+				if (isset($payload[1]) and is_array($payload[1])) $this->data = $payload['data'];
+				if (isset($payload[2]) and is_array($payload[2])) $this->flash = $payload['flash'];
 			}
 		}
-
-		if (isset($payload[0])) $this->data = $payload[0];
-		if (isset($payload[1])) $this->flash = $payload[1];
 
 		return parent::read();
 	}
 
-	// --------------------------------------------------------------------
-
 	/**
-	 * write the current session
+	 * write the session
 	 *
-	 * @access	public
-	 * @return	Fuel\Core\Session_Db
+	 * @access public
+	 * @return \Fuel\Core\Session_Mongo
 	 */
 	public function write()
 	{
 		// do we have something to write?
-		if ( ! empty($this->keys) and ! empty($this->record))
+		if (!empty($this->keys) or !empty($this->data) or !empty($this->flash))
 		{
 			parent::write();
 
 			// rotate the session id if needed
 			$this->rotate(false);
 
-			// create the session record, and add the session payload
-                        
-			$session = $this->keys;
-			$session['payload'] = $this->_serialize(array($this->data, $this->flash));
-                        
-                        // make sure we aren't messing with the $id field
-                        unset($session['_id']);
-                        
-                        /* we do findandmodify for ACID compliance. 
-                         * 
-                         */
-                        $result = \Mongo_Db::instance($this->config['database'])
-                                ->command(
-                                    array(
-                                        'findandmodify' => $this->config['collection'],
-                                        'query' => array(
-                                            'session_id' => $this->record['session_id']
-                                        ),
-                                        'update' => array (
-                                            '$set' => $session
-                                        ),
-                                        'new' => true
-                                    )
-                                );
-			
-			// update went well?
-			if ($result !== false || !empty($result))
+			// session payload
+//			$payload = $this->_serialize();
+
+			$cookie = $this->_get_cookie();
+
+			// create the session file
+			$this->_write_mongo(
+				$cookie,
+				array('keys' => $this->keys, 'data' => $this->data, 'flash' => $this->flash)
+			);
+
+			// was the session id rotated?
+			if (isset($this->keys['previous_id']) and $this->keys['previous_id'] != $this->keys['session_id'])
 			{
-				// then update the cookie
-				$this->_set_cookie();
-			}
-			else
-			{
-				logger(Fuel::L_ERROR, 'Session update failed, session record could not be found. Concurrency issue?');
+
+				// point the old session file to the new one, we don't want to lose the session
+//				$payload = $this->_serialize(array('rotated_session_id', $this->keys['session']));
+				$this->_write_mongo(
+					$this->keys['previous_id'],
+					array('keys' => $this->keys, 'data' => $this->data, 'flash' => $this->flash)
+				);
 			}
 
-			// do some garbage collection
-			if (mt_rand(0,100) < $this->config['gc_probability'])
-			{
-				$expired = $this->time->get_timestamp() - $this->config['expiration_time'];
-                                
-                                $this->record = \Mongo_Db::instance($this->config['database'])
-                                    ->where_lt('updated', $expired)
-                                    ->delete($this->config['collection']);
-                        }
+			$this->_set_cookie($this->keys['session_id']);
 		}
-
-		return $this;
 	}
 
-	// --------------------------------------------------------------------
+	protected function _read_mongo($cookie_id)
+	{
+		return $this->mongo->findOne(array('cookie_id' => $cookie_id));
+	}
+
+	protected function _write_mongo($cookie_id, $payload)
+	{
+		$payload['cookie_id'] = $cookie_id;
+		if (($result = $this->mongo->update(array('cookie_id' => $cookie_id), $payload, array('upsert' => true))) !== true)
+		{
+			throw \FuelException('Mongo couldn\'t write a session returned error code "' . $result['errmsg'] . '".');
+		}
+	}
+
+// --------------------------------------------------------------------
 
 	/**
 	 * destroy the current session
 	 *
-	 * @access	public
-	 * @return	Fuel\Core\Session_Db
+	 * @access    public
+	 * @return    Fuel\Core\Session_Db
 	 */
 	public function destroy()
 	{
 		// do we have something to destroy?
-		if ( ! empty($this->keys) and ! empty($this->record))
+		if (!empty($this->keys) and !empty($this->record))
 		{
-                        // delete the session record
-                        $result = \Mongo_Db::instance($this->config['database'])
-                                    ->where(
-                                            array(
-                                                'session_id' => $this->keys['session_id']
-                                            ))
-                                    ->delete($this->config['collection']);
+			// delete the session record
+			$result = \Mongo_Db::instance($this->config['database'])
+				->where(
+					array(
+						'session_id' => $this->keys['session_id']
+					))
+				->delete($this->config['collection']);
 		}
 
 		// reset the stored session data
@@ -242,14 +261,14 @@ class Session_Mongo extends \Session_Driver
 		return $this;
 	}
 
-	// --------------------------------------------------------------------
+// --------------------------------------------------------------------
 
 	/**
 	 * validate a driver config value
 	 *
-	 * @param	array	array with configuration values
-	 * @access	public
-	 * @return  array	validated and consolidated config
+	 * @param    array    array with configuration values
+	 * @access    public
+	 * @return  array    validated and consolidated config
 	 */
 	public function _validate_config($config)
 	{
@@ -263,15 +282,15 @@ class Session_Mongo extends \Session_Driver
 				switch ($name)
 				{
 					case 'cookie_name':
-						if ( empty($item) or ! is_string($item))
+						if (empty($item) or !is_string($item))
 						{
 							$item = 'fueldid';
 						}
-					break;
+						break;
 
 					case 'database':
 						// do we have a database?
-						if ( empty($item) or ! is_string($item))
+						if (empty($item) or !is_string($item))
 						{
 							\Config::load('db', true);
 							$item = \Config::get('db.active', false);
@@ -280,27 +299,27 @@ class Session_Mongo extends \Session_Driver
 						{
 							throw new \FuelException('You have specify a database to use MongoDB backed sessions.');
 						}
-					break;
+						break;
 
 					case 'collection':
 						// and a table name?
-						if ( empty($item) or ! is_string($item))
+						if (empty($item) or !is_string($item))
 						{
 							throw new \FuelException('You have specify a collection to use MongoDB backed sessions.');
 						}
-					break;
+						break;
 
 					case 'gc_probability':
 						// do we have a path?
-						if ( ! is_numeric($item) or $item < 0 or $item > 100)
+						if (!is_numeric($item) or $item < 0 or $item > 100)
 						{
 							// default value: 5%
 							$item = 5;
 						}
-					break;
+						break;
 
 					default:
-					break;
+						break;
 				}
 
 				// global config, was validated in the driver
