@@ -165,7 +165,7 @@ class Session_Mongo extends \Session_Driver
 			{
 				// user agent doesn't match
 			} else
-			{ var_dump($payload);die();
+			{
 				// session is valid, retrieve the rest of the payload
 				if (isset($payload['keys']) and is_array($payload['keys'])) $this->keys = $payload['keys'];
 				if (isset($payload['data']) and is_array($payload['data'])) $this->data = $payload['data'];
