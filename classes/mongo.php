@@ -127,6 +127,7 @@ class Session_Mongo extends \Session_Driver
 		if ($cookie and !$force and isset($cookie[0]))
 		{
 			$payload = $this->_read_mongo($cookie[0]);
+			$payload['keys']['session_id'] = $cookie[0];
 
 			if (empty($payload))
 			{
@@ -151,24 +152,24 @@ class Session_Mongo extends \Session_Driver
 				}
 			}
 
-			if (!isset($payload[0]) or !is_array($payload[0]))
+			if ( ! isset($payload['_id']) or get_class($payload['_id']) != 'MongoId')
 			{
 				// not a valid cookie payload
-			} elseif ($payload[0]['updated'] + $this->config['expiration_time'] <= $this->time->get_timestamp())
+			} elseif ($payload['keys']['updated'] + $this->config['expiration_time'] <= $this->time->get_timestamp())
 			{
 				// session has expired
-			} elseif ($this->config['match_ip'] and $payload[0]['ip_hash'] !== md5(\Input::ip() . \Input::real_ip()))
+			} elseif ($this->config['match_ip'] and $payload['keys']['ip_hash'] !== md5(\Input::ip() . \Input::real_ip()))
 			{
 				// IP address doesn't match
-			} elseif ($this->config['match_ua'] and $payload[0]['user_agent'] !== \Input::user_agent())
+			} elseif ($this->config['match_ua'] and $payload['keys']['user_agent'] !== \Input::user_agent())
 			{
 				// user agent doesn't match
 			} else
 			{ var_dump($payload);die();
 				// session is valid, retrieve the rest of the payload
-				if (isset($payload[0]) and is_array($payload[0])) $this->keys = $payload['keys'];
-				if (isset($payload[1]) and is_array($payload[1])) $this->data = $payload['data'];
-				if (isset($payload[2]) and is_array($payload[2])) $this->flash = $payload['flash'];
+				if (isset($payload['keys']) and is_array($payload['keys'])) $this->keys = $payload['keys'];
+				if (isset($payload['data']) and is_array($payload['data'])) $this->data = $payload['data'];
+				if (isset($payload['flash']) and is_array($payload['flash'])) $this->flash = $payload['flash'];
 			}
 		}
 
@@ -197,8 +198,8 @@ class Session_Mongo extends \Session_Driver
 			$cookie = $this->_get_cookie();
 
 			// create the session file
-			$this->_write_mongo(
-				$cookie,
+			$result = $this->_write_mongo(
+				$cookie[0],
 				array('keys' => $this->keys, 'data' => $this->data, 'flash' => $this->flash)
 			);
 
@@ -230,6 +231,7 @@ class Session_Mongo extends \Session_Driver
 		{
 			throw \FuelException('Mongo couldn\'t write a session returned error code "' . $result['errmsg'] . '".');
 		}
+		return $result;
 	}
 
 // --------------------------------------------------------------------
