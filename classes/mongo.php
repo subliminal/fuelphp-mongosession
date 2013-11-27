@@ -218,6 +218,11 @@ class Session_Mongo extends \Session_Driver
 			} else {
 				$this->_set_cookie($this->keys['session_id']);
 			}
+
+			if(mt_rand(0,100) < $this->config['gc_probability']) {
+				$expired = $this->time->get_timestamp() - $this->config['expiration_time'];
+				$this->mongo->remove(array('keys' => array('updated' => array('$lt' => $expired))));
+			}
 		}
 	}
 
