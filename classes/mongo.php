@@ -127,12 +127,13 @@ class Session_Mongo extends \Session_Driver
 		if ($cookie and !$force and isset($cookie[0]))
 		{
 			$payload = $this->_read_mongo($cookie[0]);
-			$payload['keys']['session_id'] = $cookie[0];
 
 			if (empty($payload))
 			{
 				// cookie present, but session record missing. force creation of a new session
 				return $this->read(true);
+			} else {
+				$payload['keys']['session_id'] = $cookie[0];
 			}
 			// unpack the payload
 //			$payload = $this->_unserialize($payload);
@@ -195,11 +196,11 @@ class Session_Mongo extends \Session_Driver
 			// session payload
 //			$payload = $this->_serialize();
 
-			$cookie = $this->_get_cookie();
+//			$cookie = $this->_get_cookie();
 
 			// create the session file
 			$result = $this->_write_mongo(
-				$cookie[0],
+				$this->keys['session_id'],
 				array('keys' => $this->keys, 'data' => $this->data, 'flash' => $this->flash)
 			);
 
@@ -213,21 +214,24 @@ class Session_Mongo extends \Session_Driver
 					$this->keys['previous_id'],
 					array('keys' => $this->keys, 'data' => $this->data, 'flash' => $this->flash)
 				);
+				$this->_set_cookie($this->keys['previous_id']);
+			} else {
+				$this->_set_cookie($this->keys['session_id']);
 			}
-
-			$this->_set_cookie($this->keys['session_id']);
 		}
 	}
 
 	protected function _read_mongo($cookie_id)
 	{
-		return $this->mongo->findOne(array('cookie_id' => $cookie_id));
+		$result = $this->mongo->findOne(array('session_id'=>$cookie_id));
+
+		return $result;
 	}
 
 	protected function _write_mongo($cookie_id, $payload)
 	{
-		$payload['cookie_id'] = $cookie_id;
-		if (($result = $this->mongo->update(array('cookie_id' => $cookie_id), $payload, array('upsert' => true))) !== true)
+		$payload['session_id'] = $cookie_id;
+		if (($result = $this->mongo->update( array('session_id'=>$cookie_id), $payload, array('upsert' => true))) !== true)
 		{
 			throw \FuelException('Mongo couldn\'t write a session returned error code "' . $result['errmsg'] . '".');
 		}
