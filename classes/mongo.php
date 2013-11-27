@@ -251,13 +251,7 @@ class Session_Mongo extends \Session_Driver
 		// do we have something to destroy?
 		if (!empty($this->keys) and !empty($this->record))
 		{
-			// delete the session record
-			$result = \Mongo_Db::instance($this->config['database'])
-				->where(
-					array(
-						'session_id' => $this->keys['session_id']
-					))
-				->delete($this->config['collection']);
+			$this->mongo->remove(array('session_id'=>$this->keys['session_id']));
 		}
 
 		// reset the stored session data
