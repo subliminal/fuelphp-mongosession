@@ -4,6 +4,10 @@ MongoSession
 MongoSession is a session driver for FuelPHP, which uses Mongo as
 the database backend. It is effectively a drop-in replacement for
 the DB session driver included with FuelPHP.
+_NOTE_: It would appear the parent project has been abandoned, so
+until my pull request is addressed, I'll happily take on
+maintenance of the project.
+
 
 License
 -------
@@ -30,8 +34,4 @@ always_load.
 
 Warning
 -------
-
-This is still VERY much in Beta. I haven't even tested all of the methods yet, 
-let alone get to UnitTesting. Don't use this in production but PLEASE use 
-it in development, and let me know if there are issues (or, PR if you are
-awesome).
+This is still in beta. It's not alpha anymore and is being used in production, but in my own project. Please test extensivly on your own system, and if you have any issues, patches, or changes, fixes and bug reports are welcome!
