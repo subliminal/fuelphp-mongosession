@@ -34,4 +34,4 @@ always_load.
 
 Warning
 -------
-This is still in beta. It's not alpha anymore and is being used in production, but in my own project. Please test extensivly on your own system, and if you have any issues, patches, or changes, fixes and bug reports are welcome!
+It's not beta or alpha anymore and is being used in production, but in my own project. Please test extensivly on your own system, and if you have any issues, patches, or changes, fixes and bug reports are welcome!
